@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: give-bank-backend
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn givebank.wsgi:application
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.16
+      - key: DEBUG
+        value: False
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: give-bank-db
+          property: connectionString
+
+  - type: web
+    name: give-bank-frontend
+    env: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://give-bank-backend.onrender.com/api
+
+databases:
+  - name: give-bank-db
+    databaseName: givebank
+    user: givebank 
