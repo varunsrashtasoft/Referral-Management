@@ -91,4 +91,6 @@ npm run dev
 
 
 when push code to github for server then change 
-authService.js file's API_BASE_URL to VITE_API_URL=http://192.168.0.111:8000
+authService.js file's API_BASE_URL to VITE_API_URL 
+put only this --> 'http://192.168.0.111:8000/api'
+image.png
