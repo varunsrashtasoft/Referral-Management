@@ -3,6 +3,7 @@ import { giveService } from '../services/giveService';
 import toast from 'react-hot-toast';
 import { FaBuilding, FaMapMarkerAlt, FaPhone, FaEnvelope, FaEdit, FaTrash, FaPlus } from 'react-icons/fa';
 import Select from 'react-select';
+import InfiniteScroll from 'react-infinite-scroll-component';
 
 const CATEGORY_OPTIONS = [
   { value: "", label: "All Categories" },
@@ -99,37 +100,67 @@ const MyGives = () => {
   const [search, setSearch] = useState('');
   const [editId, setEditId] = useState(null);
   const [category, setCategory] = useState("");
-  // Pagination state
+  // Infinite scroll state
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
-  const [totalPages, setTotalPages] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [totalCount, setTotalCount] = useState(0);
+  const [formError, setFormError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
 
   const categoryOptions = CATEGORY_OPTIONS.map(opt => ({ value: opt.value, label: opt.label }));
 
-  useEffect(() => {
-    fetchGives();
-  }, [page, pageSize, category, search]);
-
-  const fetchGives = async () => {
+  // Fetch gives (append if page > 1)
+  const fetchGives = async (reset = false) => {
+    if (reset) {
+      setPage(1);
+      setHasMore(true);
+      setGives([]);
+    }
     setLoading(true);
     try {
       const params = {
-        page,
+        page: reset ? 1 : page,
         page_size: pageSize,
         ...(category && { category }),
         ...(search && { search }),
       };
       const res = await giveService.getMyGives(params);
-      setGives(res.data.results || res.data || []);
+      const results = res.data.results || res.data || [];
       setTotalCount(res.data.count || (res.data.results ? res.data.results.length : res.data.length));
-      setTotalPages(res.data.count ? Math.ceil(res.data.count / pageSize) : 1);
+      if (reset) {
+        setGives(results);
+      } else {
+        setGives(prev => [...prev, ...results]);
+      }
+      // If less than pageSize returned or we've loaded all, stop fetching
+      if (!res.data.next || results.length < pageSize) {
+        setHasMore(false);
+      }
     } catch (err) {
       toast.error('Failed to fetch gives');
     } finally {
       setLoading(false);
     }
   };
+
+  // Initial and filter/search/category change effect
+  useEffect(() => {
+    fetchGives(true);
+    // eslint-disable-next-line
+  }, [category, search]);
+
+  // Fetch next page for infinite scroll
+  const fetchNext = () => {
+    setPage(prev => prev + 1);
+  };
+
+  // When page changes (but not on reset), fetch more
+  useEffect(() => {
+    if (page === 1) return;
+    fetchGives();
+    // eslint-disable-next-line
+  }, [page]);
 
   const handleEdit = (give) => {
     setForm({
@@ -155,6 +186,8 @@ const MyGives = () => {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    setFormError('');
+    setFieldErrors({});
     setLoading(true);
     try {
       if (editId) {
@@ -169,7 +202,30 @@ const MyGives = () => {
       setEditId(null);
       fetchGives();
     } catch (err) {
-      toast.error(editId ? 'Failed to update give' : 'Failed to create give');
+      if (err.response && err.response.data) {
+        const data = err.response.data;
+        let nonField = '';
+        const fields = {};
+        Object.entries(data).forEach(([key, value]) => {
+          if (Array.isArray(value)) {
+            if (key === 'non_field_errors' || key === 'detail') {
+              nonField += value.join(' ');
+            } else {
+              fields[key] = value.join(' ');
+            }
+          } else if (typeof value === 'string') {
+            if (key === 'non_field_errors' || key === 'detail') {
+              nonField += value;
+            } else {
+              fields[key] = value;
+            }
+          }
+        });
+        setFormError(nonField || (editId ? 'Failed to update give' : 'Failed to create give'));
+        setFieldErrors(fields);
+      } else {
+        setFormError(editId ? 'Failed to update give' : 'Failed to create give');
+      }
     } finally {
       setLoading(false);
     }
@@ -196,50 +252,9 @@ const MyGives = () => {
     (!category || give.category === category)
   );
 
-  // Pagination bar logic
-  const renderPagination = () => {
-    if (totalPages <= 1) return null;
-    const pages = [];
-    const maxPageLinks = 5;
-    let start = Math.max(1, page - 2);
-    let end = Math.min(totalPages, start + maxPageLinks - 1);
-    if (end - start < maxPageLinks - 1) {
-      start = Math.max(1, end - maxPageLinks + 1);
-    }
-    if (start > 1) pages.push(<span key="start-ellipsis" className="px-2">...</span>);
-    for (let i = start; i <= end; i++) {
-      pages.push(
-        <button
-          key={i}
-          className={`px-3 py-1 rounded ${i === page ? 'bg-primary-600 text-white font-bold' : 'bg-gray-100 text-gray-700'} mx-1`}
-          onClick={() => setPage(i)}
-          disabled={i === page}
-        >
-          {i}
-        </button>
-      );
-    }
-    if (end < totalPages) pages.push(<span key="end-ellipsis" className="px-2">...</span>);
-    return (
-      <div className="flex justify-center items-center mt-8 gap-1">
-        <button
-          className="px-3 py-1 rounded bg-gray-100 text-gray-700 mx-1"
-          onClick={() => setPage(page - 1)}
-          disabled={page === 1}
-        >Prev</button>
-        {pages}
-        <button
-          className="px-3 py-1 rounded bg-gray-100 text-gray-700 mx-1"
-          onClick={() => setPage(page + 1)}
-          disabled={page === totalPages}
-        >Next</button>
-      </div>
-    );
-  };
-
   return (
     <div className="max-w-2xl mx-auto p-6">
-      <h1 className="text-2xl font-bold mb-2">My Gives ({gives.length})</h1>
+      <h1 className="text-2xl font-bold mb-2">My Gives <span className="font-normal text-lg text-gray-500">({totalCount})</span></h1>
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
         <input
           className="input w-full md:w-64 mb-2 md:mb-0"
@@ -251,7 +266,7 @@ const MyGives = () => {
           className="w-full md:w-48"
           options={categoryOptions}
           value={categoryOptions.find(opt => opt.value === category) || categoryOptions[0]}
-          onChange={opt => { setCategory(opt.value); setPage(1); }}
+          onChange={opt => { setCategory(opt.value); }}
           isSearchable
         />
       </div>
@@ -264,35 +279,42 @@ const MyGives = () => {
         </button>
       </div>
       {/* Gives List as Cards */}
-      <div className="space-y-4">
-        {loading ? (
-          <div className="text-center py-10 text-lg text-gray-400">Loading...</div>
-        ) : filteredGives.length === 0 ? (
-          <div className="p-6 text-center text-gray-400">No gives found.</div>
-        ) : filteredGives.map((give) => (
-          <div key={give.id} className="bg-white rounded-xl shadow p-4 flex flex-col gap-2 relative">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="font-bold text-lg text-gray-900">{give.name}</span>
-                {give.category && <span className="ml-2 text-sm text-gray-500">({give.category})</span>}
+      <InfiniteScroll
+        dataLength={gives.length}
+        next={fetchNext}
+        hasMore={hasMore}
+        loader={<div className="text-center py-4 text-primary-500">Loading more...</div>}
+        endMessage={<div className="text-center py-4 text-gray-400">No more gives to show.</div>}
+      >
+        <div className="space-y-4">
+          {loading && gives.length === 0 ? (
+            <div className="text-center py-10 text-lg text-gray-400">Loading...</div>
+          ) : gives.length === 0 ? (
+            <div className="p-6 text-center text-gray-400">No gives found.</div>
+          ) : gives.map((give) => (
+            <div key={give.id} className="bg-white rounded-xl shadow p-4 flex flex-col gap-2 relative">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="font-bold text-lg text-gray-900">{give.name}</span>
+                  {give.category && <span className="ml-2 text-sm text-gray-500">({give.category})</span>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button className="text-gray-500 hover:text-primary-600" onClick={() => handleEdit(give)}><FaEdit /></button>
+                  <button className="text-gray-500 hover:text-red-600" onClick={() => handleDelete(give)}><FaTrash /></button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button className="text-gray-500 hover:text-primary-600" onClick={() => handleEdit(give)}><FaEdit /></button>
-                <button className="text-gray-500 hover:text-red-600" onClick={() => handleDelete(give)}><FaTrash /></button>
+              <div className="flex flex-wrap gap-4 text-gray-800 mt-1">
+                {give.company && <div className="flex items-center gap-1"><FaBuilding /> {give.company}</div>}
+                {(give.city || give.state) && <div className="flex items-center gap-1"><FaMapMarkerAlt />{give.city}{give.city && give.state ? ',' : ''} {give.state}</div>}
+              </div>
+              <div className="flex flex-wrap gap-4 text-gray-800 mt-1">
+                {give.phone && <div className="flex items-center gap-1"><FaPhone /> {give.phone}</div>}
+                {give.email && <div className="flex items-center gap-1"><FaEnvelope /> {give.email}</div>}
               </div>
             </div>
-            <div className="flex flex-wrap gap-4 text-gray-800 mt-1">
-              {give.company && <div className="flex items-center gap-1"><FaBuilding /> {give.company}</div>}
-              {(give.city || give.state) && <div className="flex items-center gap-1"><FaMapMarkerAlt />{give.city}{give.city && give.state ? ',' : ''} {give.state}</div>}
-            </div>
-            <div className="flex flex-wrap gap-4 text-gray-800 mt-1">
-              {give.phone && <div className="flex items-center gap-1"><FaPhone /> {give.phone}</div>}
-              {give.email && <div className="flex items-center gap-1"><FaEnvelope /> {give.email}</div>}
-            </div>
-          </div>
-        ))}
-      </div>
-      {renderPagination()}
+          ))}
+        </div>
+      </InfiniteScroll>
       {/* Add Give Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
@@ -302,9 +324,11 @@ const MyGives = () => {
             </div>
             <button type="button" className="absolute top-3 right-4 text-gray-300 hover:text-gray-600 text-2xl" onClick={handleModalClose}>&times;</button>
             <div className="px-8 py-6 grid gap-4 bg-gray-50">
+              {formError && <div className="mb-4 text-red-600 text-sm text-center">{formError}</div>}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
                 <input className="input w-full rounded-lg focus:ring-2 focus:ring-primary-400" placeholder="Enter Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} required />
+                {fieldErrors.name && <div className="text-red-600 text-xs mt-1">{fieldErrors.name}</div>}
               </div>
               <div className="flex gap-4">
                 <div className="flex-1">
@@ -313,16 +337,19 @@ const MyGives = () => {
                     <option value="">Select Category</option>
                     {CATEGORY_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                   </select>
+                  {fieldErrors.category && <div className="text-red-600 text-xs mt-1">{fieldErrors.category}</div>}
                 </div>
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Department (Optional)</label>
                   <input className="input w-full rounded-lg focus:ring-2 focus:ring-primary-400" placeholder="Enter Department" value={form.department} onChange={e => setForm({ ...form, department: e.target.value })} />
+                  {fieldErrors.department && <div className="text-red-600 text-xs mt-1">{fieldErrors.department}</div>}
                 </div>
               </div>
               <div className="flex gap-4">
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Company (Optional)</label>
                   <input className="input w-full rounded-lg focus:ring-2 focus:ring-primary-400" placeholder="Enter Company" value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} />
+                  {fieldErrors.company && <div className="text-red-600 text-xs mt-1">{fieldErrors.company}</div>}
                 </div>
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">State</label>
@@ -330,31 +357,37 @@ const MyGives = () => {
                     <option value="">Select State</option>
                     {STATE_OPTIONS.map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                   </select>
+                  {fieldErrors.state && <div className="text-red-600 text-xs mt-1">{fieldErrors.state}</div>}
                 </div>
               </div>
               <div className="flex gap-4">
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
                   <input className="input w-full rounded-lg focus:ring-2 focus:ring-primary-400" placeholder="Enter City" value={form.city} onChange={e => setForm({ ...form, city: e.target.value })} required />
+                  {fieldErrors.city && <div className="text-red-600 text-xs mt-1">{fieldErrors.city}</div>}
                 </div>
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
                   <input className="input w-full rounded-lg focus:ring-2 focus:ring-primary-400" placeholder="Enter Phone" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} required />
+                  {fieldErrors.phone && <div className="text-red-600 text-xs mt-1">{fieldErrors.phone}</div>}
                 </div>
               </div>
               <div className="flex gap-4">
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
                   <input className="input w-full rounded-lg focus:ring-2 focus:ring-primary-400" placeholder="Enter Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+                  {fieldErrors.email && <div className="text-red-600 text-xs mt-1">{fieldErrors.email}</div>}
                 </div>
                 <div className="flex-1">
                   <label className="block text-sm font-medium text-gray-700 mb-1">Website (Optional)</label>
                   <input className="input w-full rounded-lg focus:ring-2 focus:ring-primary-400" placeholder="Enter Website" value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} />
+                  {fieldErrors.website && <div className="text-red-600 text-xs mt-1">{fieldErrors.website}</div>}
                 </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                 <textarea className="input w-full rounded-lg focus:ring-2 focus:ring-primary-400" placeholder="Enter Description" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} required />
+                {fieldErrors.description && <div className="text-red-600 text-xs mt-1">{fieldErrors.description}</div>}
               </div>
               {/* <div className="flex items-center gap-2">
                 <input

@@ -14,6 +14,9 @@ class User(AbstractUser):
     profile_picture = models.ImageField(upload_to='profile_pics/', blank=True, null=True)  # Disabled due to Pillow dependency
     bio = models.TextField(blank=True, null=True)
     
+    # Make email unique
+    email = models.EmailField(unique=True, blank=True, null=True)
+    
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { authService } from '../services/authService';
 import { useLocation } from 'react-router-dom';
 import Select from 'react-select';
+import InfiniteScroll from 'react-infinite-scroll-component';
 
 const CATEGORY_OPTIONS = [
   { value: "", label: "All Categories" },
@@ -63,38 +64,67 @@ const AllGives = () => {
   const [loading, setLoading] = useState(true);
   const { user, isSuperAdmin } = useAuth();
   const location = useLocation();
-  // Pagination state
+  // Infinite scroll state
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
-  const [totalPages, setTotalPages] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [totalCount, setTotalCount] = useState(0);
 
-  useEffect(() => {
-    const fetchGives = async () => {
-      setLoading(true);
-      try {
-        let res;
-        const params = {
-          page,
-          page_size: pageSize,
-          ...(category && { category }),
-          ...(selectedUser && { user: selectedUser }),
-          ...(search && { search }),
-        };
-        if (isSuperAdmin) {
-          res = await giveService.getAllGivesAdmin(params);
-        } else {
-          res = await giveService.getAllGives(params);
-        }
-        setGives(res.data.results || res.data);
-        setTotalCount(res.data.count || (res.data.results ? res.data.results.length : res.data.length));
-        setTotalPages(res.data.count ? Math.ceil(res.data.count / pageSize) : 1);
-      } finally {
-        setLoading(false);
+  // Fetch gives (append if page > 1)
+  const fetchGives = async (reset = false) => {
+    if (reset) {
+      setPage(1);
+      setHasMore(true);
+      setGives([]);
+    }
+    setLoading(true);
+    try {
+      let res;
+      const params = {
+        page: reset ? 1 : page,
+        page_size: pageSize,
+        ...(category && { category }),
+        ...(selectedUser && { user: selectedUser }),
+        ...(search && { search }),
+      };
+      if (isSuperAdmin) {
+        res = await giveService.getAllGivesAdmin(params);
+      } else {
+        res = await giveService.getAllGives(params);
       }
-    };
+      const results = res.data.results || res.data;
+      setTotalCount(res.data.count || (res.data.results ? res.data.results.length : res.data.length));
+      if (reset) {
+        setGives(results);
+      } else {
+        setGives(prev => [...prev, ...results]);
+      }
+      // If less than pageSize returned or we've loaded all, stop fetching
+      if (!res.data.next || results.length < pageSize) {
+        setHasMore(false);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Initial and filter/search/category/user change effect
+  useEffect(() => {
+    fetchGives(true);
+    // eslint-disable-next-line
+  }, [isSuperAdmin, category, selectedUser, search]);
+
+  // Fetch next page for infinite scroll
+  const fetchNext = () => {
+    setPage(prev => prev + 1);
+  };
+
+  // When page changes (but not on reset), fetch more
+  useEffect(() => {
+    if (page === 1) return;
     fetchGives();
-  }, [isSuperAdmin, page, pageSize, category, selectedUser, search]);
+    // eslint-disable-next-line
+  }, [page]);
 
   useEffect(() => {
     const fetchUsers = async () => {
@@ -113,47 +143,6 @@ const AllGives = () => {
     const params = new URLSearchParams(location.search);
     setSelectedUser(params.get('user') || '');
   }, [location.search]);
-
-  // Pagination bar logic
-  const renderPagination = () => {
-    if (totalPages <= 1) return null;
-    const pages = [];
-    const maxPageLinks = 5;
-    let start = Math.max(1, page - 2);
-    let end = Math.min(totalPages, start + maxPageLinks - 1);
-    if (end - start < maxPageLinks - 1) {
-      start = Math.max(1, end - maxPageLinks + 1);
-    }
-    if (start > 1) pages.push(<span key="start-ellipsis" className="px-2">...</span>);
-    for (let i = start; i <= end; i++) {
-      pages.push(
-        <button
-          key={i}
-          className={`px-3 py-1 rounded ${i === page ? 'bg-primary-600 text-white font-bold' : 'bg-gray-100 text-gray-700'} mx-1`}
-          onClick={() => setPage(i)}
-          disabled={i === page}
-        >
-          {i}
-        </button>
-      );
-    }
-    if (end < totalPages) pages.push(<span key="end-ellipsis" className="px-2">...</span>);
-    return (
-      <div className="flex justify-center items-center mt-8 gap-1">
-        <button
-          className="px-3 py-1 rounded bg-gray-100 text-gray-700 mx-1"
-          onClick={() => setPage(page - 1)}
-          disabled={page === 1}
-        >Prev</button>
-        {pages}
-        <button
-          className="px-3 py-1 rounded bg-gray-100 text-gray-700 mx-1"
-          onClick={() => setPage(page + 1)}
-          disabled={page === totalPages}
-        >Next</button>
-      </div>
-    );
-  };
 
   // Prepare options for react-select
   const userOptions = [
@@ -178,68 +167,72 @@ const AllGives = () => {
             className="w-full md:w-48"
             options={categoryOptions}
             value={categoryOptions.find(opt => opt.value === category) || categoryOptions[0]}
-            onChange={opt => { setCategory(opt.value); setPage(1); }}
+            onChange={opt => { setCategory(opt.value); }}
             isSearchable
           />
           <Select
             className="w-full md:w-48"
             options={userOptions}
             value={userOptions.find(opt => String(opt.value) === String(selectedUser)) || userOptions[0]}
-            onChange={opt => { setSelectedUser(opt.value); setPage(1); }}
+            onChange={opt => { setSelectedUser(opt.value); }}
             isSearchable
           />
         </div>
       </div>
-      {loading ? (
-        <div className="text-center py-10 text-lg text-gray-400">Loading...</div>
-      ) : (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {gives.map(give => (
-              <div key={give.id} className="bg-white rounded-2xl shadow p-5 flex flex-col gap-2 border border-gray-100 hover:shadow-lg transition-shadow">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="font-bold text-lg">{give.name}</span>
-                  <span className="text-gray-500 text-sm">({give.category})</span>
-                </div>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-700 text-sm">
-                  <div className="flex items-center gap-2"><FaBuilding className="text-primary-700" /> {give.company || <span className="text-gray-400">-</span>}</div>
-                  <div className="flex items-center gap-2"><FaBuilding className="text-primary-700" /> {give.city}, {give.state}</div>
-                  <div className="flex items-center gap-2"><FaEnvelope className="text-primary-700" /> {isSuperAdmin ? give.email : maskEmail(give.email)}</div>
-                  <div className="flex items-center gap-2"><MdCategory className="text-primary-700" /> {give.department || give.description || <span className="text-gray-400">-</span>}</div>
-                  <div className="flex items-center gap-2"><FaPhone className="text-primary-700" /> {isSuperAdmin ? give.phone : maskPhone(give.phone)}</div>
-                  <div className="flex items-center gap-2"><FaUser className="text-primary-700" /> {give.role || "Owner"}</div>
-                </div>
-                <hr className="my-2" />
-                <div className="flex items-center gap-2">
-                  {/* User profile icon or photo */}
-                  {give.user?.profile_picture ? (
-                    <img
-                      src={give.user.profile_picture}
-                      alt="Profile"
-                      className="w-8 h-8 rounded-full object-cover border"
-                    />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 font-bold text-base">
-                      {give.user?.first_name?.[0] || give.user?.username?.[0] || "U"}
-                    </div>
-                  )}
-                  <span className="font-semibold text-primary-700 text-sm">
-                    {give.user?.first_name || give.user?.username || "User"}
-                    {give.user?.last_name ? ` ${give.user.last_name}` : ""}
-                  </span>
-                  <div className="flex-1" />
-                  {give.user?.mobile && (
-                    <>
-                      <a href={`tel:${give.user.mobile}`} className="bg-primary-900 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-semibold hover:bg-primary-700 transition"><FaPhone />Call</a>
-                      <a href={`https://wa.me/${give.user.mobile}`} target="_blank" rel="noopener noreferrer" className="bg-green-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-semibold hover:bg-green-600 transition"><FaWhatsapp />Chat</a>
-                    </>
-                  )}
-                </div>
+      <InfiniteScroll
+        dataLength={gives.length}
+        next={fetchNext}
+        hasMore={hasMore}
+        loader={<div className="text-center py-4 text-primary-500">Loading more...</div>}
+        endMessage={<div className="text-center py-4 text-gray-400">No more gives to show.</div>}
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+          {gives.map(give => (
+            <div key={give.id} className="bg-white rounded-2xl shadow p-5 flex flex-col gap-2 border border-gray-100 hover:shadow-lg transition-shadow">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="font-bold text-lg">{give.name}</span>
+                <span className="text-gray-500 text-sm">({give.category})</span>
               </div>
-            ))}
-          </div>
-          {renderPagination()}
-        </>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-gray-700 text-sm">
+                <div className="flex items-center gap-2"><FaBuilding className="text-primary-700" /> {give.company || <span className="text-gray-400">-</span>}</div>
+                <div className="flex items-center gap-2"><FaBuilding className="text-primary-700" /> {give.city}, {give.state}</div>
+                <div className="flex items-center gap-2"><FaEnvelope className="text-primary-700" /> {isSuperAdmin ? give.email : maskEmail(give.email)}</div>
+                <div className="flex items-center gap-2"><MdCategory className="text-primary-700" /> {give.department || give.description || <span className="text-gray-400">-</span>}</div>
+                <div className="flex items-center gap-2"><FaPhone className="text-primary-700" /> {isSuperAdmin ? give.phone : maskPhone(give.phone)}</div>
+                <div className="flex items-center gap-2"><FaUser className="text-primary-700" /> {give.role || "Owner"}</div>
+              </div>
+              <hr className="my-2" />
+              <div className="flex items-center gap-2">
+                {/* User profile icon or photo */}
+                {give.user?.profile_picture ? (
+                  <img
+                    src={give.user.profile_picture}
+                    alt="Profile"
+                    className="w-8 h-8 rounded-full object-cover border"
+                  />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 font-bold text-base">
+                    {give.user?.first_name?.[0] || give.user?.username?.[0] || "U"}
+                  </div>
+                )}
+                <span className="font-semibold text-primary-700 text-sm">
+                  {give.user?.first_name || give.user?.username || "User"}
+                  {give.user?.last_name ? ` ${give.user.last_name}` : ""}
+                </span>
+                <div className="flex-1" />
+                {give.user?.mobile && (
+                  <>
+                    <a href={`tel:${give.user.mobile}`} className="bg-primary-900 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-semibold hover:bg-primary-700 transition"><FaPhone />Call</a>
+                    <a href={`https://wa.me/${give.user.mobile}`} target="_blank" rel="noopener noreferrer" className="bg-green-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-semibold hover:bg-green-600 transition"><FaWhatsapp />Chat</a>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </InfiniteScroll>
+      {loading && gives.length === 0 && (
+        <div className="text-center py-10 text-lg text-gray-400">Loading...</div>
       )}
     </div>
   );

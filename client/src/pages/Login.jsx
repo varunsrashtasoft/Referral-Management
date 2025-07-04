@@ -7,6 +7,7 @@ const Login = () => {
   const { login } = useAuth()
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [formError, setFormError] = useState("")
   
   const {
     register,
@@ -16,10 +17,27 @@ const Login = () => {
 
   const onSubmit = async (data) => {
     setIsLoading(true)
+    setFormError("")
     try {
       const result = await login(data)
       if (!result.success) {
-        // Error is already handled in the auth context
+        if (result.error) {
+          if (typeof result.error === 'string') {
+            setFormError(result.error)
+          } else if (typeof result.error === 'object') {
+            // DRF error dict
+            let msg = ''
+            Object.entries(result.error).forEach(([key, value]) => {
+              if (Array.isArray(value)) msg += value.join(' ')
+              else if (typeof value === 'string') msg += value
+            })
+            setFormError(msg || 'Login failed')
+          } else {
+            setFormError('Login failed')
+          }
+        } else {
+          setFormError('Login failed')
+        }
       }
     } finally {
       setIsLoading(false)
@@ -42,6 +60,9 @@ const Login = () => {
         </div>
         
         <form className="mt-8 space-y-6" onSubmit={handleSubmit(onSubmit)}>
+          {formError && (
+            <div className="mb-4 text-red-600 text-sm text-center">{formError}</div>
+          )}
           <div className="space-y-4">
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-gray-700">

@@ -5,6 +5,7 @@ import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import Select from 'react-select';
+import InfiniteScroll from 'react-infinite-scroll-component';
 
 const UserManagement = () => {
   const { user } = useAuth();
@@ -17,12 +18,13 @@ const UserManagement = () => {
   const [gives, setGives] = useState([]);
   const [showGivesModal, setShowGivesModal] = useState(false);
   const [formError, setFormError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState({});
   const [imagePreview, setImagePreview] = useState(null);
   const fileInputRef = React.useRef();
   const navigate = useNavigate();
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
-  const [totalPages, setTotalPages] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
   const [totalCount, setTotalCount] = useState(0);
   const [search, setSearch] = useState("");
   const [chapter, setChapter] = useState("");
@@ -33,29 +35,57 @@ const UserManagement = () => {
     ...Array.from(new Set(users.map(u => u.chapter).filter(Boolean))).map(chap => ({ value: chap, label: chap }))
   ];
 
-  useEffect(() => {
-    fetchUsers();
-  }, [page, pageSize, search, chapter]);
-
-  const fetchUsers = async () => {
+  // Fetch users (append if page > 1)
+  const fetchUsers = async (reset = false) => {
+    if (reset) {
+      setPage(1);
+      setHasMore(true);
+      setUsers([]);
+    }
     setLoading(true);
     try {
       const params = {
-        page,
+        page: reset ? 1 : page,
         page_size: pageSize,
         ...(search && { search }),
         ...(chapter && { chapter }),
       };
       const res = await authService.getUsers(params);
-      setUsers(res.data.results || res.data || []);
+      const results = res.data.results || res.data || [];
       setTotalCount(res.data.count || (res.data.results ? res.data.results.length : res.data.length));
-      setTotalPages(res.data.count ? Math.ceil(res.data.count / pageSize) : 1);
+      if (reset) {
+        setUsers(results);
+      } else {
+        setUsers(prev => [...prev, ...results]);
+      }
+      // If less than pageSize returned or we've loaded all, stop fetching
+      if (!res.data.next || results.length < pageSize) {
+        setHasMore(false);
+      }
     } catch (err) {
       toast.error('Failed to fetch users');
     } finally {
       setLoading(false);
     }
   };
+
+  // Initial and filter/search/chapter change effect
+  useEffect(() => {
+    fetchUsers(true);
+    // eslint-disable-next-line
+  }, [search, chapter]);
+
+  // Fetch next page for infinite scroll
+  const fetchNext = () => {
+    setPage(prev => prev + 1);
+  };
+
+  // When page changes (but not on reset), fetch more
+  useEffect(() => {
+    if (page === 1) return;
+    fetchUsers();
+    // eslint-disable-next-line
+  }, [page]);
 
   const handleImageChange = (e) => {
     const file = e.target.files[0];
@@ -68,6 +98,7 @@ const UserManagement = () => {
   const handleCreate = async (e) => {
     e.preventDefault();
     setFormError('');
+    setFieldErrors({});
     if (form.password !== form.password_confirm) {
       setFormError('Passwords do not match');
       return;
@@ -90,7 +121,30 @@ const UserManagement = () => {
       setImagePreview(null);
       fetchUsers();
     } catch (err) {
-      setFormError('Failed to create user');
+      if (err.response && err.response.data) {
+        const data = err.response.data;
+        let nonField = '';
+        const fields = {};
+        Object.entries(data).forEach(([key, value]) => {
+          if (Array.isArray(value)) {
+            if (key === 'non_field_errors' || key === 'detail') {
+              nonField += value.join(' ');
+            } else {
+              fields[key] = value.join(' ');
+            }
+          } else if (typeof value === 'string') {
+            if (key === 'non_field_errors' || key === 'detail') {
+              nonField += value;
+            } else {
+              fields[key] = value;
+            }
+          }
+        });
+        setFormError(nonField || 'Failed to create user');
+        setFieldErrors(fields);
+      } else {
+        setFormError('Failed to create user');
+      }
     } finally {
       setLoading(false);
     }
@@ -99,6 +153,7 @@ const UserManagement = () => {
   const handleEdit = async (e) => {
     e.preventDefault();
     setFormError('');
+    setFieldErrors({});
     setLoading(true);
     try {
       let data;
@@ -115,7 +170,30 @@ const UserManagement = () => {
       setShowUserModal(false);
       fetchUsers();
     } catch (err) {
-      setFormError('Failed to update user');
+      if (err.response && err.response.data) {
+        const data = err.response.data;
+        let nonField = '';
+        const fields = {};
+        Object.entries(data).forEach(([key, value]) => {
+          if (Array.isArray(value)) {
+            if (key === 'non_field_errors' || key === 'detail') {
+              nonField += value.join(' ');
+            } else {
+              fields[key] = value.join(' ');
+            }
+          } else if (typeof value === 'string') {
+            if (key === 'non_field_errors' || key === 'detail') {
+              nonField += value;
+            } else {
+              fields[key] = value;
+            }
+          }
+        });
+        setFormError(nonField || 'Failed to update user');
+        setFieldErrors(fields);
+      } else {
+        setFormError('Failed to update user');
+      }
     } finally {
       setLoading(false);
     }
@@ -148,46 +226,6 @@ const UserManagement = () => {
     }
   };
 
-  const renderPagination = () => {
-    // Always show pagination bar, even if only one page
-    const pages = [];
-    const maxPageLinks = 5;
-    let start = Math.max(1, page - 2);
-    let end = Math.min(totalPages, start + maxPageLinks - 1);
-    if (end - start < maxPageLinks - 1) {
-      start = Math.max(1, end - maxPageLinks + 1);
-    }
-    if (start > 1) pages.push(<span key="start-ellipsis" className="px-2">...</span>);
-    for (let i = start; i <= end; i++) {
-      pages.push(
-        <button
-          key={i}
-          className={`px-3 py-1 rounded ${i === page ? 'bg-primary-600 text-white font-bold' : 'bg-gray-100 text-gray-700'} mx-1`}
-          onClick={() => setPage(i)}
-          disabled={i === page}
-        >
-          {i}
-        </button>
-      );
-    }
-    if (end < totalPages) pages.push(<span key="end-ellipsis" className="px-2">...</span>);
-    return (
-      <div className="flex justify-center items-center mt-8 gap-1">
-        <button
-          className="px-3 py-1 rounded bg-gray-100 text-gray-700 mx-1"
-          onClick={() => setPage(page - 1)}
-          disabled={page === 1}
-        >Prev</button>
-        {pages}
-        <button
-          className="px-3 py-1 rounded bg-gray-100 text-gray-700 mx-1"
-          onClick={() => setPage(page + 1)}
-          disabled={page === totalPages}
-        >Next</button>
-      </div>
-    );
-  };
-
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
@@ -197,50 +235,57 @@ const UserManagement = () => {
             placeholder="Search by username, email, or name..."
             className="input w-full md:w-64 rounded-lg bg-gray-100 focus:ring-2 focus:ring-primary-400"
             value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1); }}
+            onChange={e => { setSearch(e.target.value); }}
           />
           <Select
             className="w-full md:w-48"
             options={chapterOptions}
             value={chapterOptions.find(opt => opt.value === chapter) || chapterOptions[0]}
-            onChange={opt => { setChapter(opt.value); setPage(1); }}
+            onChange={opt => { setChapter(opt.value); }}
             isSearchable
           />
         </div>
         <button className="btn btn-primary px-6 py-2 rounded-lg" onClick={() => setShowCreateModal(true)}>+ Create User</button>
       </div>
       <div className="bg-white rounded-lg shadow overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Chapter</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {loading ? (
-              <tr><td colSpan={5} className="text-center py-8 text-gray-500">Loading users...</td></tr>
-            ) : Array.isArray(users) && users.length === 0 ? (
-              <tr><td colSpan={5} className="text-center py-8 text-gray-400">No users found.</td></tr>
-            ) : Array.isArray(users) && users.map((u) => (
-              <tr key={u.id} className="hover:bg-gray-50 transition">
-                <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{u.username}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{u.email}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{u.first_name} {u.last_name}</td>
-                <td className="px-6 py-4 whitespace-nowrap">{u.chapter}</td>
-                <td className="px-6 py-4 whitespace-nowrap space-x-2">
-                  <button className="btn btn-sm btn-secondary" onClick={() => { setSelectedUser(u); setForm(u); setImagePreview(u.profile_picture || null); setShowUserModal(true); }}>Edit</button>
-                  <button className="btn btn-sm btn-outline" onClick={() => handleDelete(u.id)}>Delete</button>
-                  <button className="btn btn-sm btn-primary" onClick={() => navigate(`/gives?user=${u.id}`)}>View Gives</button>
-                </td>
+        <InfiniteScroll
+          dataLength={users.length}
+          next={fetchNext}
+          hasMore={hasMore}
+          loader={<div className="text-center py-4 text-primary-500">Loading more...</div>}
+          endMessage={<div className="text-center py-4 text-gray-400">No more users to show.</div>}
+        >
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Username</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Chapter</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-        {renderPagination()}
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {loading && users.length === 0 ? (
+                <tr><td colSpan={5} className="text-center py-8 text-gray-500">Loading users...</td></tr>
+              ) : Array.isArray(users) && users.length === 0 ? (
+                <tr><td colSpan={5} className="text-center py-8 text-gray-400">No users found.</td></tr>
+              ) : Array.isArray(users) && users.map((u) => (
+                <tr key={u.id} className="hover:bg-gray-50 transition">
+                  <td className="px-6 py-4 whitespace-nowrap font-medium text-gray-900">{u.username}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{u.email}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{u.first_name} {u.last_name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap">{u.chapter}</td>
+                  <td className="px-6 py-4 whitespace-nowrap space-x-2">
+                    <button className="btn btn-sm btn-secondary" onClick={() => { setSelectedUser(u); setForm(u); setImagePreview(u.profile_picture || null); setShowUserModal(true); }}>Edit</button>
+                    <button className="btn btn-sm btn-outline" onClick={() => handleDelete(u.id)}>Delete</button>
+                    <button className="btn btn-sm btn-primary" onClick={() => navigate(`/gives?user=${u.id}`)}>View Gives</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </InfiniteScroll>
       </div>
 
       {/* Create User Modal */}
@@ -276,39 +321,47 @@ const UserManagement = () => {
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
               <input className="input w-full" placeholder="Username" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} required />
+              {fieldErrors.username && <div className="text-red-600 text-xs mt-1">{fieldErrors.username}</div>}
             </div>
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
               <input className="input w-full" placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+              {fieldErrors.email && <div className="text-red-600 text-xs mt-1">{fieldErrors.email}</div>}
             </div>
             <div className="mb-4 flex gap-2">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
                 <input className="input w-full" placeholder="First Name" value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} />
+                {fieldErrors.first_name && <div className="text-red-600 text-xs mt-1">{fieldErrors.first_name}</div>}
               </div>
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
                 <input className="input w-full" placeholder="Last Name" value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} />
+                {fieldErrors.last_name && <div className="text-red-600 text-xs mt-1">{fieldErrors.last_name}</div>}
               </div>
             </div>
             <div className="mb-4 flex gap-2">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Mobile</label>
                 <input className="input w-full" placeholder="Mobile" value={form.mobile} onChange={e => setForm({ ...form, mobile: e.target.value })} />
+                {fieldErrors.mobile && <div className="text-red-600 text-xs mt-1">{fieldErrors.mobile}</div>}
               </div>
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Chapter</label>
                 <input className="input w-full" placeholder="Chapter" value={form.chapter} onChange={e => setForm({ ...form, chapter: e.target.value })} />
+                {fieldErrors.chapter && <div className="text-red-600 text-xs mt-1">{fieldErrors.chapter}</div>}
               </div>
             </div>
             <div className="mb-4 flex gap-2">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
                 <input className="input w-full" type="password" placeholder="Password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required />
+                {fieldErrors.password && <div className="text-red-600 text-xs mt-1">{fieldErrors.password}</div>}
               </div>
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Confirm Password</label>
                 <input className="input w-full" type="password" placeholder="Confirm Password" value={form.password_confirm} onChange={e => setForm({ ...form, password_confirm: e.target.value })} required />
+                {fieldErrors.password_confirm && <div className="text-red-600 text-xs mt-1">{fieldErrors.password_confirm}</div>}
               </div>
             </div>
             <div className="mb-4 flex items-center gap-2">
@@ -356,29 +409,35 @@ const UserManagement = () => {
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">Username</label>
               <input className="input w-full" placeholder="Username" value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} required disabled />
+              {fieldErrors.username && <div className="text-red-600 text-xs mt-1">{fieldErrors.username}</div>}
             </div>
             <div className="mb-4">
               <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
               <input className="input w-full" placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
+              {fieldErrors.email && <div className="text-red-600 text-xs mt-1">{fieldErrors.email}</div>}
             </div>
             <div className="mb-4 flex gap-2">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
                 <input className="input w-full" placeholder="First Name" value={form.first_name} onChange={e => setForm({ ...form, first_name: e.target.value })} />
+                {fieldErrors.first_name && <div className="text-red-600 text-xs mt-1">{fieldErrors.first_name}</div>}
               </div>
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
                 <input className="input w-full" placeholder="Last Name" value={form.last_name} onChange={e => setForm({ ...form, last_name: e.target.value })} />
+                {fieldErrors.last_name && <div className="text-red-600 text-xs mt-1">{fieldErrors.last_name}</div>}
               </div>
             </div>
             <div className="mb-4 flex gap-2">
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Mobile</label>
                 <input className="input w-full" placeholder="Mobile" value={form.mobile} onChange={e => setForm({ ...form, mobile: e.target.value })} />
+                {fieldErrors.mobile && <div className="text-red-600 text-xs mt-1">{fieldErrors.mobile}</div>}
               </div>
               <div className="flex-1">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Chapter</label>
                 <input className="input w-full" placeholder="Chapter" value={form.chapter} onChange={e => setForm({ ...form, chapter: e.target.value })} />
+                {fieldErrors.chapter && <div className="text-red-600 text-xs mt-1">{fieldErrors.chapter}</div>}
               </div>
             </div>
             <div className="mb-4 flex items-center gap-2">
