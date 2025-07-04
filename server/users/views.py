@@ -1,10 +1,11 @@
-from rest_framework import status, generics
+from rest_framework import status, generics, filters
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.db.models import Count
 from datetime import datetime, timedelta
+from django_filters.rest_framework import DjangoFilterBackend
 
 from .models import User
 from .serializers import (
@@ -45,6 +46,9 @@ class UserListView(generics.ListAPIView):
     permission_classes = [IsSuperAdmin]
     serializer_class = PublicUserSerializer
     queryset = User.objects.all().order_by('-date_joined')
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter]
+    search_fields = ['username', 'email', 'first_name', 'last_name']
+    filterset_fields = ['chapter']
 
 
 class UserDetailView(generics.RetrieveUpdateDestroyAPIView):

@@ -97,16 +97,26 @@ export const authService = {
     return api.get(`/leaderboard/?period=${period}`)
   },
 
-  getUsers: () => {
-    return api.get('/users/')
+  getUsers: (params = {}) => {
+    return api.get('/users/', { params })
   },
 
   createUser: (data) => {
-    return api.post('/users/register/', data)
+    if (data instanceof FormData) {
+      return api.post('/users/register/', data, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+    }
+    return api.post('/users/register/', data);
   },
 
   updateUser: (id, data) => {
-    return api.put(`/users/${id}/`, data)
+    if (data instanceof FormData) {
+      return api.put(`/users/${id}/`, data, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+    }
+    return api.put(`/users/${id}/`, data);
   },
 
   deleteUser: (id) => {

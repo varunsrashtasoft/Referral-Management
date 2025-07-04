@@ -46,12 +46,14 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     """Serializer for user registration (admin only)."""
     password = serializers.CharField(write_only=True)
     password_confirm = serializers.CharField(write_only=True)
+    profile_picture = serializers.ImageField(required=False, allow_null=True)
     
     class Meta:
         model = User
         fields = [
             'username', 'email', 'first_name', 'last_name', 
-            'mobile', 'chapter', 'password', 'password_confirm'
+            'mobile', 'chapter', 'password', 'password_confirm',
+            'profile_picture'
         ]
     
     def validate(self, attrs):

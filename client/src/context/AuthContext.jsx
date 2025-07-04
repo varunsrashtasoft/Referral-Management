@@ -37,13 +37,18 @@ export const AuthProvider = ({ children }) => {
   const login = async (credentials) => {
     try {
       const response = await authService.login(credentials)
-      const { access, user: userData } = response.data
-      
+      const { access } = response.data
+
       localStorage.setItem('access_token', access)
-      localStorage.setItem('user', JSON.stringify(userData))
       authService.setAuthToken(access)
+
+      // Fetch full profile after login
+      const profileRes = await authService.getProfile()
+      const userData = profileRes.data
+
+      localStorage.setItem('user', JSON.stringify(userData))
       setUser(userData)
-      
+
       toast.success('Successfully logged in!')
       return { success: true }
     } catch (error) {

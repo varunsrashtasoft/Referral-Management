@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { giveService } from '../services/giveService';
 import toast from 'react-hot-toast';
 import { FaBuilding, FaMapMarkerAlt, FaPhone, FaEnvelope, FaEdit, FaTrash, FaPlus } from 'react-icons/fa';
+import Select from 'react-select';
 
 const CATEGORY_OPTIONS = [
   { value: "", label: "All Categories" },
@@ -98,16 +99,31 @@ const MyGives = () => {
   const [search, setSearch] = useState('');
   const [editId, setEditId] = useState(null);
   const [category, setCategory] = useState("");
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(10);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+
+  const categoryOptions = CATEGORY_OPTIONS.map(opt => ({ value: opt.value, label: opt.label }));
 
   useEffect(() => {
     fetchGives();
-  }, []);
+  }, [page, pageSize, category, search]);
 
   const fetchGives = async () => {
     setLoading(true);
     try {
-      const res = await giveService.getMyGives();
+      const params = {
+        page,
+        page_size: pageSize,
+        ...(category && { category }),
+        ...(search && { search }),
+      };
+      const res = await giveService.getMyGives(params);
       setGives(res.data.results || res.data || []);
+      setTotalCount(res.data.count || (res.data.results ? res.data.results.length : res.data.length));
+      setTotalPages(res.data.count ? Math.ceil(res.data.count / pageSize) : 1);
     } catch (err) {
       toast.error('Failed to fetch gives');
     } finally {
@@ -180,25 +196,64 @@ const MyGives = () => {
     (!category || give.category === category)
   );
 
+  // Pagination bar logic
+  const renderPagination = () => {
+    if (totalPages <= 1) return null;
+    const pages = [];
+    const maxPageLinks = 5;
+    let start = Math.max(1, page - 2);
+    let end = Math.min(totalPages, start + maxPageLinks - 1);
+    if (end - start < maxPageLinks - 1) {
+      start = Math.max(1, end - maxPageLinks + 1);
+    }
+    if (start > 1) pages.push(<span key="start-ellipsis" className="px-2">...</span>);
+    for (let i = start; i <= end; i++) {
+      pages.push(
+        <button
+          key={i}
+          className={`px-3 py-1 rounded ${i === page ? 'bg-primary-600 text-white font-bold' : 'bg-gray-100 text-gray-700'} mx-1`}
+          onClick={() => setPage(i)}
+          disabled={i === page}
+        >
+          {i}
+        </button>
+      );
+    }
+    if (end < totalPages) pages.push(<span key="end-ellipsis" className="px-2">...</span>);
+    return (
+      <div className="flex justify-center items-center mt-8 gap-1">
+        <button
+          className="px-3 py-1 rounded bg-gray-100 text-gray-700 mx-1"
+          onClick={() => setPage(page - 1)}
+          disabled={page === 1}
+        >Prev</button>
+        {pages}
+        <button
+          className="px-3 py-1 rounded bg-gray-100 text-gray-700 mx-1"
+          onClick={() => setPage(page + 1)}
+          disabled={page === totalPages}
+        >Next</button>
+      </div>
+    );
+  };
+
   return (
     <div className="max-w-2xl mx-auto p-6">
       <h1 className="text-2xl font-bold mb-2">My Gives ({gives.length})</h1>
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
         <input
           className="input w-full md:w-64 mb-2 md:mb-0"
-          placeholder="Search by name..."
+          placeholder="Search by anything..."
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
-        <select
-          className="input w-full md:w-48 rounded-lg bg-gray-100 focus:ring-2 focus:ring-primary-400"
-          value={category}
-          onChange={e => setCategory(e.target.value)}
-        >
-          {CATEGORY_OPTIONS.map(opt => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
+        <Select
+          className="w-full md:w-48"
+          options={categoryOptions}
+          value={categoryOptions.find(opt => opt.value === category) || categoryOptions[0]}
+          onChange={opt => { setCategory(opt.value); setPage(1); }}
+          isSearchable
+        />
       </div>
       <div className="mb-4 text-right">
         <button
@@ -211,7 +266,7 @@ const MyGives = () => {
       {/* Gives List as Cards */}
       <div className="space-y-4">
         {loading ? (
-          <div className="p-6 text-center text-gray-500">Loading...</div>
+          <div className="text-center py-10 text-lg text-gray-400">Loading...</div>
         ) : filteredGives.length === 0 ? (
           <div className="p-6 text-center text-gray-400">No gives found.</div>
         ) : filteredGives.map((give) => (
@@ -237,6 +292,7 @@ const MyGives = () => {
           </div>
         ))}
       </div>
+      {renderPagination()}
       {/* Add Give Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
@@ -300,7 +356,7 @@ const MyGives = () => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
                 <textarea className="input w-full rounded-lg focus:ring-2 focus:ring-primary-400" placeholder="Enter Description" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} required />
               </div>
-              <div className="flex items-center gap-2">
+              {/* <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
                   id="is_active"
@@ -309,9 +365,9 @@ const MyGives = () => {
                   className="form-checkbox h-5 w-5 text-primary-600"
                 />
                 <label htmlFor="is_active" className="text-sm font-medium text-gray-700">Active Give</label>
-              </div>
+              </div> */}
               <div className="flex justify-end mt-4">
-                <button type="button" className="btn btn-outline mr-2" onClick={handleModalClose}>Cancel</button>
+                <button type="button" className="btn btn-outline mr-2 px-6 py-2 rounded-lg" onClick={handleModalClose}>Cancel</button>
                 <button type="submit" className="btn btn-primary px-6 py-2 text-base font-semibold rounded-lg shadow hover:bg-primary-700 hover:scale-105 transition-transform" disabled={loading}>{loading ? (editId ? 'Saving...' : 'Adding...') : (editId ? 'Save Changes' : 'Add Give')}</button>
               </div>
             </div>

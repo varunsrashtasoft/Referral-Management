@@ -14,12 +14,23 @@ import toast from 'react-hot-toast'
 import { FaTrophy } from 'react-icons/fa'
 
 const Dashboard = () => {
-  const { user } = useAuth()
+  const { user, isSuperAdmin } = useAuth()
   const [userStats, setUserStats] = useState(null)
   const [leaderboard, setLeaderboard] = useState([])
   const [lastWeekLeaderboard, setLastWeekLeaderboard] = useState([])
   const [givesStats, setGivesStats] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [allGives, setAllGives] = useState([])
+
+  // List of all categories (from backend choices)
+  const CATEGORY_LIST = [
+    "advertising_marketing", "agriculture", "animals", "architecture_engineering", "art_entertainment",
+    "car_motorcycle", "computer_programming", "construction", "consulting", "employment_activities",
+    "event_business_service", "finance_insurance", "food_beverage", "health_wellness", "legal_accounting",
+    "manufacturing", "organizations_others", "personal_services", "real_estate_services", "repair",
+    "retail", "security_investigation", "sports_leisure", "telecommunications", "training_coaching",
+    "transport_shipping", "travel", "other", "auto_tech_startup"
+  ];
 
   useEffect(() => {
     loadDashboardData()
@@ -38,6 +49,7 @@ const Dashboard = () => {
       setGivesStats(givesStatsRes.data)
       // Aggregate gives per user (all time)
       const gives = givesRes.data.results || givesRes.data
+      setAllGives(gives)
       const userMap = {}
       gives.forEach(give => {
         const u = give.user
@@ -56,16 +68,8 @@ const Dashboard = () => {
       const leaderboardArr = Object.values(userMap).sort((a, b) => b.total_gives - a.total_gives)
       setLeaderboard(leaderboardArr)
       // Aggregate gives per user (last 7 days)
-      const now = new Date()
-      const weekAgo = new Date(now)
-      weekAgo.setDate(now.getDate() - 7)
-      const lastWeekGives = gives.filter(give => {
-        if (!give.created_at) return false
-        const created = new Date(give.created_at)
-        return created >= weekAgo && created <= now
-      })
       const weekUserMap = {}
-      lastWeekGives.forEach(give => {
+      gives.forEach(give => {
         const u = give.user
         if (!u) return
         if (!weekUserMap[u.id]) {
@@ -88,6 +92,31 @@ const Dashboard = () => {
     }
   }
 
+  // Helper: group gives by category
+  const groupByCategory = (givesArr) => {
+    const stats = {}
+    givesArr.forEach(give => {
+      if (give.category) {
+        stats[give.category] = (stats[give.category] || 0) + 1
+      }
+    })
+    return stats
+  }
+
+  // Helper: format category label
+  const formatCategoryLabel = (label) => {
+    return label.replace(/_/g, ' ')
+  }
+
+  // My gives by category
+  const myGives = allGives.filter(give => give.user && user && give.user.id === user.id)
+  const myCategoryStats = groupByCategory(myGives)
+
+  // For left card: all gives by category (superadmin: use stats, else aggregate from allGives)
+  const allCategoryStats = isSuperAdmin
+    ? givesStats?.category_stats
+    : groupByCategory(allGives);
+
   const getRankIcon = (rank) => {
     switch (rank) {
       case 1:
@@ -106,6 +135,17 @@ const Dashboard = () => {
   const restAll = Array.isArray(leaderboard) ? leaderboard.slice(3) : [];
   const top3Week = Array.isArray(lastWeekLeaderboard) ? lastWeekLeaderboard.slice(0, 3) : [];
   const restWeek = Array.isArray(lastWeekLeaderboard) ? lastWeekLeaderboard.slice(3) : [];
+
+  // Calculate last week's gives and my gives for this week at the component level
+  const now = new Date();
+  const weekAgo = new Date(now);
+  weekAgo.setDate(now.getDate() - 7);
+  const lastWeekGives = allGives.filter(give => {
+    if (!give.created_at) return false;
+    const created = new Date(give.created_at);
+    return created >= weekAgo && created <= now;
+  });
+  const weekMyGives = lastWeekGives.filter(give => give.user && user && give.user.id === user.id);
 
   if (loading) {
     return (
@@ -128,7 +168,7 @@ const Dashboard = () => {
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
         <div className="card">
           <div className="flex items-center">
             <div className="p-3 rounded-full bg-primary-100 ml-3 my-2">
@@ -136,7 +176,31 @@ const Dashboard = () => {
             </div>
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Total Gives</p>
-              <p className="text-2xl font-bold text-gray-900">{userStats?.total_gives || 0}</p>
+              <p className="text-2xl font-bold text-gray-900">{allGives.length}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-blue-100 ml-3 my-2">
+              <Users className="h-6 w-6 text-blue-600" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">My Gives</p>
+              <p className="text-2xl font-bold text-gray-900">{myGives.length}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="flex items-center">
+            <div className="p-3 rounded-full bg-cyan-100 ml-3 my-2">
+              <TrendingUp className="h-6 w-6 text-cyan-600" />
+            </div>
+            <div className="ml-4">
+              <p className="text-sm font-medium text-gray-600">This Week Total Gives</p>
+              <p className="text-2xl font-bold text-gray-900">{lastWeekGives.length}</p>
             </div>
           </div>
         </div>
@@ -147,8 +211,8 @@ const Dashboard = () => {
               <TrendingUp className="h-6 w-6 text-green-600" />
             </div>
             <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">This Week</p>
-              <p className="text-2xl font-bold text-gray-900">{userStats?.last_week_gives || 0}</p>
+              <p className="text-sm font-medium text-gray-600">This Week My Gives</p>
+              <p className="text-2xl font-bold text-gray-900">{weekMyGives.length}</p>
             </div>
           </div>
         </div>
@@ -161,18 +225,6 @@ const Dashboard = () => {
             <div className="ml-4">
               <p className="text-sm font-medium text-gray-600">Your Rank</p>
               <p className="text-2xl font-bold text-gray-900">#{userStats?.rank || 'N/A'}</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="flex items-center">
-            <div className="p-3 rounded-full bg-purple-100 ml-3 my-2">
-              <Users className="h-6 w-6 text-purple-600" />
-            </div>
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Active Gives</p>
-              <p className="text-2xl font-bold text-gray-900">{givesStats?.active_gives || 0}</p>
             </div>
           </div>
         </div>
@@ -340,24 +392,32 @@ const Dashboard = () => {
         </div>
       </div>
 
-      {/* Category Stats */}
-      {givesStats?.category_stats && (
-        <div className="card">
-          <div className="card-header">
-            <h2 className="text-xl font-semibold text-gray-900">Gives by Category</h2>
-          </div>
-          <div className="card-content">
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-              {Object.entries(givesStats.category_stats).map(([category, count]) => (
-                <div key={category} className="text-center p-4 bg-gray-50 rounded-lg">
-                  <p className="text-2xl font-bold text-primary-600">{count}</p>
-                  <p className="text-sm text-gray-600 capitalize">{category.replace('_', ' ')}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+      {/* Category Stats Table */}
+      <div className="card mt-8">
+        <div className="card-header">
+          <h2 className="text-xl font-semibold text-gray-900">Gives by Category</h2>
         </div>
-      )}
+        <div className="card-content overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">All Gives</th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">My Gives</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {CATEGORY_LIST.map(category => (
+                <tr key={category}>
+                  <td className="px-6 py-4 whitespace-nowrap text-gray-900 capitalize">{formatCategoryLabel(category)}</td>
+                  <td className="px-6 py-4 text-center font-bold text-primary-600">{allCategoryStats?.[category] || 0}</td>
+                  <td className="px-6 py-4 text-center font-bold text-blue-600">{myCategoryStats?.[category] || 0}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   )
 }
