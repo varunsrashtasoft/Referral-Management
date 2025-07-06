@@ -158,17 +158,20 @@ const UserManagement = () => {
     try {
       let data;
       if (form.profile_picture instanceof File) {
+        // If a new file is selected, use FormData
         data = new FormData();
         Object.entries(form).forEach(([key, value]) => {
           if (value !== null && value !== undefined) data.append(key, value);
         });
       } else {
-        data = form;
+        // If no new file is selected, exclude profile_picture from the data
+        const { profile_picture, ...formDataWithoutPicture } = form;
+        data = formDataWithoutPicture;
       }
       await authService.updateUser(selectedUser.id, data);
       toast.success('User updated');
       setShowUserModal(false);
-      fetchUsers();
+      fetchUsers(true);
     } catch (err) {
       if (err.response && err.response.data) {
         const data = err.response.data;
